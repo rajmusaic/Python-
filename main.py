@@ -25,9 +25,8 @@ TOKEN = "8431815261:AAGrAJHFOx153xKTn1t_x_N3siHe2XXaSQY"
 CHANNEL_USERNAME = "@saniwall_23"
 bot = telebot.TeleBot(TOKEN)
 
-# Yahan apna MongoDB wala link daalein (Double quotes ke andar)
-# Aur <db_password> hatakar apna asli password daalein
-MONGO_URI = "mongodb+srv://Mybott:<db_password>@mybotdata.21olkh5.mongodb.net/?appName=MyBotData" 
+# Aapka Corrected MongoDB Link (Password with %40)
+MONGO_URI = "mongodb+srv://Mybott:Mybott.%40.com@mybotdata.21olkh5.mongodb.net/?appName=MyBotData" 
 
 client = MongoClient(MONGO_URI)
 db = client['telegram_bot']
@@ -49,27 +48,27 @@ def check_join(user_id):
 @bot.message_handler(content_types=['photo', 'video', 'document'])
 def save_media(message):
     if not is_admin(message.from_user.id): return
-    
+
     if message.caption:
         file_code = message.caption.strip().split()[0] 
-        
+
         if message.content_type == 'photo':
             file_id = message.photo[-1].file_id
         elif message.content_type == 'video':
             file_id = message.video.file_id
         else:
             file_id = message.document.file_id
-            
-        # MongoDB me data save karna
+
+        # MongoDB me data hamesha ke liye save karna
         collection.update_one(
             {"_id": file_code},
             {"$set": {"file_id": file_id, "type": message.content_type}},
             upsert=True
         )
-        
+
         bot_username = bot.get_me().username
         link = f"https://t.me/{bot_username}?start={file_code}"
-        
+
         bot.reply_to(message, f"✅ **Saved in Database as: {file_code}**\n\nLink for Channel:\n`{link}`", parse_mode="Markdown")
     else:
         bot.reply_to(message, "⚠️ Caption mein number likho (e.g. 1)")
@@ -79,7 +78,7 @@ def save_media(message):
 def handle_all(message):
     user_id = message.from_user.id
     text = message.text
-    
+
     if text.startswith('/start'):
         parts = text.split()
         file_code = parts[1] if len(parts) > 1 else None
@@ -105,7 +104,7 @@ def handle_all(message):
 
     # MongoDB se data nikalna
     file_data = collection.find_one({"_id": file_code})
-    
+
     if file_data:
         try:
             if file_data['type'] == 'photo': bot.send_photo(message.chat.id, file_data['file_id'])
