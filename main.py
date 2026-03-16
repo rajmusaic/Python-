@@ -1,16 +1,16 @@
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
-import json
 import os
-from flask import Flask         # Render trick ke liye add kiya
-from threading import Thread    # Render trick ke liye add kiya
+from flask import Flask
+from threading import Thread
+from pymongo import MongoClient
 
-# --- FLASK KEEP ALIVE CODE (Render trick) ---
+# --- FLASK KEEP ALIVE CODE ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is alive!"
+    return "Bot is alive and Database is connected!"
 
 def run():
   app.run(host='0.0.0.0', port=8080)
@@ -20,18 +20,18 @@ def keep_alive():
     t.start()
 # --------------------------------------------
 
+# --- BOT & DATABASE SETUP ---
 TOKEN = "8431815261:AAGrAJHFOx153xKTn1t_x_N3siHe2XXaSQY"
 CHANNEL_USERNAME = "@saniwall_23"
 bot = telebot.TeleBot(TOKEN)
-DB_FILE = "wall_data.json"
 
-def load_db():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, 'r') as f: return json.load(f)
-    return {}
+# Yahan apna MongoDB wala link daalein (Double quotes ke andar)
+# Aur <db_password> hatakar apna asli password daalein
+MONGO_URI = "mongodb+srv://Mybott:<db_password>@mybotdata.21olkh5.mongodb.net/?appName=MyBotData" 
 
-def save_db(data):
-    with open(DB_FILE, 'w') as f: json.dump(data, f)
+client = MongoClient(MONGO_URI)
+db = client['telegram_bot']
+collection = db['wallpapers']
 
 def is_admin(user_id):
     try:
@@ -45,11 +45,10 @@ def check_join(user_id):
         return status in ['member', 'administrator', 'creator']
     except: return False
 
-# 👑 ADMIN: Upload image/video with number in caption
+# 👑 ADMIN: Upload image/video
 @bot.message_handler(content_types=['photo', 'video', 'document'])
 def save_media(message):
     if not is_admin(message.from_user.id): return
-    db = load_db()
     
     if message.caption:
         file_code = message.caption.strip().split()[0] 
@@ -61,31 +60,40 @@ def save_media(message):
         else:
             file_id = message.document.file_id
             
-        db[file_code] = {"id": file_id, "type": message.content_type}
-        save_db(db)
+        # MongoDB me data save karna
+        collection.update_one(
+            {"_id": file_code},
+            {"$set": {"file_id": file_id, "type": message.content_type}},
+            upsert=True
+        )
         
         bot_username = bot.get_me().username
         link = f"https://t.me/{bot_username}?start={file_code}"
         
-        bot.reply_to(message, f"✅ **Saved as: {file_code}**\n\nLink for Channel:\n`{link}`", parse_mode="Markdown")
+        bot.reply_to(message, f"✅ **Saved in Database as: {file_code}**\n\nLink for Channel:\n`{link}`", parse_mode="Markdown")
     else:
         bot.reply_to(message, "⚠️ Caption mein number likho (e.g. 1)")
 
-# 👥 USER: Get file when clicking link or typing code
+# 👥 USER: Get file
 @bot.message_handler(func=lambda message: True)
 def handle_all(message):
     user_id = message.from_user.id
     text = message.text
     
-    # Extract code from /start link or direct text
     if text.startswith('/start'):
         parts = text.split()
         file_code = parts[1] if len(parts) > 1 else None
     else:
         file_code = text.strip()
 
+    # --- PROFESSIONAL WELCOME MESSAGE ---
     if not file_code:
-        bot.reply_to(message, "Welcome! Code bhejiye.")
+        welcome_msg = (
+            "🌟 **Welcome to Saniwall!** 🌟\n\n"
+            "Yahan aapko best HD Wallpapers aur content milega.\n"
+            "👉 Kripya channel se post ka link click karein ya direct file code bhejein."
+        )
+        bot.reply_to(message, welcome_msg, parse_mode="Markdown")
         return
 
     # Check Join
@@ -95,20 +103,26 @@ def handle_all(message):
         bot.reply_to(message, "🚫 Pehle channel join karein!", reply_markup=markup)
         return
 
-    db = load_db()
-    if file_code in db:
-        file = db[file_code]
+    # MongoDB se data nikalna
+    file_data = collection.find_one({"_id": file_code})
+    
+    if file_data:
         try:
-            if file['type'] == 'photo': bot.send_photo(message.chat.id, file['id'])
-            elif file['type'] == 'video': bot.send_video(message.chat.id, file['id'])
-            else: bot.send_document(message.chat.id, file['id'])
-        except:
-            bot.reply_to(message, "❌ Error sending file.")
+            if file_data['type'] == 'photo': bot.send_photo(message.chat.id, file_data['file_id'])
+            elif file_data['type'] == 'video': bot.send_video(message.chat.id, file_data['file_id'])
+            else: bot.send_document(message.chat.id, file_data['file_id'])
+        except Exception as e:
+            # --- SERVER DOWN ERROR ---
+            bot.reply_to(message, "❌ **Server Down!**\nAbhi file bhejne me problem ho rahi hai. Kripya thodi der baad try karein.", parse_mode="Markdown")
     else:
-        # Agar user sirf /start likhta hai toh error na dikhaye
-        if not text.startswith('/start'):
-            bot.reply_to(message, f"❌ Invalid Code: {file_code}")
+        # --- FILE NOT FOUND ERROR ---
+        error_msg = (
+            "⚠️ **File Not Found!**\n\n"
+            f"Aapne jo code bheja hai (`{file_code}`), wo galat hai ya file delete ho chuki hai.\n"
+            "Kripya sahi link use karein."
+        )
+        bot.reply_to(message, error_msg, parse_mode="Markdown")
 
-print("🚀 Bot Started Successfully!")
-keep_alive() # Render trick start karne ke liye
+print("🚀 Bot Started with MongoDB Database!")
+keep_alive() 
 bot.polling(none_stop=True)
